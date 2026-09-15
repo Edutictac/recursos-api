@@ -41,6 +41,26 @@ def get_json(url: str, params: dict[str, Any] | None = None) -> Any:
     raise last_exc if last_exc else RuntimeError(f"GET {url} failed")
 
 
+def get_text(url: str) -> str:
+    """GET + texto (UTF-8) con reintentos, para fuentes XML/HTML."""
+    last_exc: Exception | None = None
+    for attempt in range(1, config.HTTP_RETRIES + 1):
+        try:
+            with httpx.Client(
+                timeout=config.HTTP_TIMEOUT,
+                headers={"User-Agent": config.USER_AGENT},
+                follow_redirects=True,
+            ) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                return resp.text
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            if attempt < config.HTTP_RETRIES:
+                time.sleep(attempt * config.HTTP_RATE_DELAY * 2)
+    raise last_exc if last_exc else RuntimeError(f"GET {url} failed")
+
+
 def get_bytes(url: str, params: dict[str, Any] | None = None) -> bytes:
     """GET binario (para descargar paquetes .h5p/.zip) con reintentos."""
     params = params or {}

@@ -65,3 +65,45 @@ def test_eduhoot_educational_kept():
     assert p._is_educational({"name": "Nombre de las notas musicales", "tags": ["musica", "primaria"]}) is True
     assert p._is_educational({"name": "Números enteros", "tags": ["2-eso", "matematicas"]}) is True
     assert p._is_educational({"name": "Divisions", "tags": []}) is True
+
+
+SAMPLE_JCLIC = """<?xml version="1.0" encoding="UTF-8"?>
+<JClicProject name="criptacoloniaguell" version="0.1.3">
+ <settings>
+  <title>La Cripta de la Colònia Güell</title>
+  <description>
+   <p>Aquest paquet d'activitats té l'objectiu de conèixer la Cripta.</p>
+  </description>
+  <descriptions>
+   <description language="ca"><p>Descripció catalana.</p></description>
+   <description language="en"><p>English description.</p></description>
+   <description language="es"><p>Descripción española.</p></description>
+  </descriptions>
+  <license type="by-nc-sa" url="https://creativecommons.org/licenses/by-nc-sa/4.0" />
+ </settings>
+</JClicProject>
+"""
+
+
+def test_extract_jclic_description():
+    from app.providers.jclic import _extract_description
+
+    d = _extract_description(SAMPLE_JCLIC)
+    assert d["description"] == "Descripción española."
+    assert d["description_ca"] == "Descripció catalana."
+    assert d["description_en"] == "English description."
+    assert d["license"] == "by-nc-sa"
+
+
+def test_extract_jclic_description_no_multilingual():
+    from app.providers.jclic import _extract_description
+
+    xml = """<JClicProject><settings>
+    <description><p>Descripció única.</p></description>
+    <license type="by" />
+    </settings></JClicProject>"""
+    d = _extract_description(xml)
+    assert d["description"] == "Descripció única."
+    assert d["description_ca"] == ""
+    assert d["description_en"] == ""
+    assert d["license"] == "by"

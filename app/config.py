@@ -13,6 +13,11 @@ EDUHOOT_BASE_URL = os.environ.get("EDUHOOT_BASE_URL", "https://eduhoot.edutictac
 # Base del frontend (para construir play_url del visor propio).
 APP_BASE_URL = os.environ.get("RECURSOS_APP_URL", "https://recursos.edutictac.es").rstrip("/")
 
+# Caché de descripciones JClic (evita re-descargar el .jclic en cada sync).
+JCLIC_DESCRIPTIONS_CACHE = os.environ.get(
+    "JCLIC_DESCRIPTIONS_CACHE", "/var/lib/recursos-api/jclic-descriptions.json"
+)
+
 # Proxy de miniaturas: hosts permitidos (evita SSRF y hotlink a terceros).
 THUMB_ALLOWED_HOSTS = {
     "clic.xtec.cat",
