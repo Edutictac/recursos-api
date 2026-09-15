@@ -28,8 +28,10 @@ CREATE TABLE IF NOT EXISTS resources (
     external_id TEXT NOT NULL,
     title TEXT DEFAULT '',
     title_ca TEXT DEFAULT '',
+    title_en TEXT DEFAULT '',
     description TEXT DEFAULT '',
     description_ca TEXT DEFAULT '',
+    description_en TEXT DEFAULT '',
     author TEXT DEFAULT '',
     license TEXT DEFAULT '',
     license_known INTEGER NOT NULL DEFAULT 0,
@@ -78,3 +80,12 @@ CREATE INDEX IF NOT EXISTS idx_sync_runs_provider ON sync_runs(provider);
 def init_index_schema() -> None:
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Migracions idempotents per a bases existents (noves columnes)."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(resources)")}
+    for col in ("title_en", "description_en"):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE resources ADD COLUMN {col} TEXT DEFAULT ''")

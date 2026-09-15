@@ -34,8 +34,10 @@ class Resource:
     external_id: str
     title: str = ""
     title_ca: str = ""
+    title_en: str = ""
     description: str = ""
     description_ca: str = ""
+    description_en: str = ""
     author: str = ""
     license: str = ""
     license_known: bool = False
@@ -64,8 +66,10 @@ class Resource:
             "external_id": self.external_id,
             "title": self.title,
             "title_ca": self.title_ca,
+            "title_en": self.title_en,
             "description": self.description,
             "description_ca": self.description_ca,
+            "description_en": self.description_en,
             "author": self.author,
             "license": self.license,
             "license_known": 1 if self.license_known else 0,
@@ -96,8 +100,10 @@ class Resource:
             external_id=row["external_id"],
             title=row["title"] or "",
             title_ca=row["title_ca"] or "",
+            title_en=row["title_en"] or "",
             description=row["description"] or "",
             description_ca=row["description_ca"] or "",
+            description_en=row["description_en"] or "",
             author=row["author"] or "",
             license=row["license"] or "",
             license_known=bool(row["license_known"]),
@@ -128,8 +134,10 @@ class Resource:
             "external_id": self.external_id,
             "title": self.title,
             "title_ca": self.title_ca,
+            "title_en": self.title_en,
             "description": self.description,
             "description_ca": self.description_ca,
+            "description_en": self.description_en,
             "author": self.author,
             "license": self.license,
             "license_known": self.license_known,

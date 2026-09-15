@@ -50,8 +50,12 @@ def _to_game(r: Resource) -> dict:
         game["language"] = ""
     if r.title_ca:
         game["title_ca"] = r.title_ca
+    if r.title_en:
+        game["title_en"] = r.title_en
     if r.description_ca:
         game["notes_ca"] = r.description_ca
+    if r.description_en:
+        game["notes_en"] = r.description_en
     if r.thumbnail_url:
         game["image"] = _thumb_url(r.thumbnail_url)
     if r.format == "flash":

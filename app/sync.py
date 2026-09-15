@@ -87,7 +87,8 @@ def run_sync(provider: ResourceProvider) -> SyncRun:
 
 def _insert_sql() -> str:
     cols = [
-        "provider", "external_id", "title", "title_ca", "description", "description_ca",
+        "provider", "external_id", "title", "title_ca", "title_en", "description",
+        "description_ca", "description_en",
         "author", "license", "license_known", "language", "resource_type", "format",
         "subject", "educational_stage", "educational_level", "tags", "source_url",
         "play_url", "download_url", "reuse_url", "thumbnail_url", "metadata_json",
@@ -99,7 +100,8 @@ def _insert_sql() -> str:
 
 def _update_sql() -> str:
     cols = [
-        "title", "title_ca", "description", "description_ca", "author", "license",
+        "title", "title_ca", "title_en", "description", "description_ca", "description_en",
+        "author", "license",
         "license_known", "language", "resource_type", "format", "subject",
         "educational_stage", "educational_level", "tags", "source_url", "play_url",
         "download_url", "reuse_url", "thumbnail_url", "metadata_json",
