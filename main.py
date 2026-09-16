@@ -28,6 +28,7 @@ import secrets
 import sqlite3
 import time
 import urllib.parse
+from secrets import compare_digest
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -298,6 +299,35 @@ class ActivityAssignmentIn(BaseModel):
     title: str = ""
 
 
+class PlayResourceMetadataIn(BaseModel):
+    title: str
+    description: str = ""
+    type: str
+    language: str = "es"
+    subject: str = ""
+    educational_stage: str = ""
+    tags: list[str] = []
+    license: str = "CC BY-SA"
+    author_pseudonym: str = ""
+
+
+class PlayResourcePackageIn(BaseModel):
+    format: str = "h5p"
+    delivery: str = "download_url"
+
+
+class PlayResourcePublishIn(BaseModel):
+    contract_version: str
+    external_id: str
+    version: str
+    idempotency_key: str
+    metadata: PlayResourceMetadataIn
+    visibility: str
+    canonical_url: str
+    download_url: str
+    package: PlayResourcePackageIn
+
+
 # --- Endpoints ---
 
 @app.get("/api/health")
@@ -476,6 +506,146 @@ def list_resources(
         "limit": limit,
         "items": [Resource.from_row(r).to_dict() for r in rows],
     }
+
+
+# --- Ingesta server-to-server de EduTicTac Play ---
+
+PLAY_PROVIDER = "edutictac-play"
+PLAY_TYPES = {"multiple-choice", "true-false", "memory", "matching"}
+
+
+def _require_play_ingest(request: Request) -> None:
+    expected = config.PLAY_INGEST_TOKEN
+    if not expected:
+        raise HTTPException(status_code=503, detail="Play integration is not configured")
+    authorization = request.headers.get("Authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    if not token or not compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Play integration authentication required")
+
+
+def _play_url(value: str, field: str) -> str:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme != "https" or parsed.username or parsed.password or not parsed.hostname:
+        raise HTTPException(status_code=400, detail=f"{field} must be an HTTPS URL")
+    if parsed.hostname.lower() not in config.PLAY_ALLOWED_HOSTS:
+        raise HTTPException(status_code=400, detail=f"{field} host is not allowed")
+    return value[:2000]
+
+
+def _play_resource_payload(payload: PlayResourcePublishIn, activity_id: str) -> dict:
+    expected_external_id = f"{PLAY_PROVIDER}:{activity_id}"
+    if payload.external_id != expected_external_id:
+        raise HTTPException(status_code=400, detail="external_id does not match activity id")
+    if payload.contract_version != "1":
+        raise HTTPException(status_code=400, detail="unsupported contract_version")
+    if payload.visibility != "public":
+        raise HTTPException(status_code=400, detail="only public activities can be indexed")
+    if payload.metadata.type not in PLAY_TYPES:
+        raise HTTPException(status_code=400, detail="unsupported Play activity type")
+    if payload.package.format != "h5p" or payload.package.delivery != "download_url":
+        raise HTTPException(status_code=400, detail="unsupported H5P package delivery")
+    if not payload.metadata.title.strip() or len(payload.metadata.title) > 200:
+        raise HTTPException(status_code=400, detail="invalid activity title")
+    if not payload.idempotency_key.startswith(f"{expected_external_id}:"):
+        raise HTTPException(status_code=400, detail="invalid idempotency key")
+    if len(payload.version) > 128 or len(payload.idempotency_key) > 256:
+        raise HTTPException(status_code=400, detail="version metadata is too long")
+    if len(payload.metadata.tags) > 20 or any(len(tag) > 80 for tag in payload.metadata.tags):
+        raise HTTPException(status_code=400, detail="too many or too-long tags")
+    now = datetime.now(timezone.utc).isoformat()
+    metadata = payload.metadata.model_dump()
+    return {
+        "provider": PLAY_PROVIDER,
+        "external_id": expected_external_id,
+        "title": payload.metadata.title.strip()[:200],
+        "description": payload.metadata.description.strip()[:2000],
+        "author": payload.metadata.author_pseudonym.strip()[:120],
+        "license": payload.metadata.license.strip()[:80],
+        "license_known": 1 if payload.metadata.license.strip() else 0,
+        "language": json.dumps([payload.metadata.language.strip()[:12] or "es"], ensure_ascii=False),
+        "resource_type": "interactive",
+        "format": "h5p",
+        "subject": payload.metadata.subject.strip()[:120],
+        "educational_stage": payload.metadata.educational_stage.strip()[:120],
+        "educational_level": "[]",
+        "tags": json.dumps(payload.metadata.tags, ensure_ascii=False),
+        "source_url": payload.canonical_url,
+        "play_url": payload.canonical_url,
+        "download_url": payload.download_url,
+        "reuse_url": payload.download_url,
+        "thumbnail_url": "",
+        "metadata_json": json.dumps({"contract": payload.contract_version, "version": payload.version, "idempotency_key": payload.idempotency_key, **metadata}, ensure_ascii=False),
+        "created_at_source": now,
+        "updated_at_source": now,
+        "indexed_at": now,
+        "last_synced_at": now,
+        "active": 1,
+    }
+
+
+@app.post("/api/integrations/recursos/activities/{activity_id}/publish")
+def publish_play_activity(activity_id: str, payload: PlayResourcePublishIn, request: Request) -> dict:
+    _require_play_ingest(request)
+    canonical_url = _play_url(payload.canonical_url, "canonical_url")
+    download_url = _play_url(payload.download_url, "download_url")
+    payload = payload.model_copy(update={"canonical_url": canonical_url, "download_url": download_url})
+    row = _play_resource_payload(payload, activity_id)
+    with get_conn() as conn:
+        previous = conn.execute(
+            "SELECT id, active, metadata_json FROM resources WHERE provider = ? AND external_id = ?",
+            (PLAY_PROVIDER, row["external_id"]),
+        ).fetchone()
+        previous_metadata = json.loads(previous["metadata_json"] or "{}") if previous else {}
+        previous_key = previous_metadata.get("idempotency_key")
+        if previous and previous_key == payload.idempotency_key and previous["active"]:
+            status = "published"
+            resource_id = previous["id"]
+        else:
+            columns = ", ".join(row)
+            placeholders = ", ".join(f":{key}" for key in row)
+            conn.execute(
+                f"INSERT INTO resources ({columns}) VALUES ({placeholders}) "
+                "ON CONFLICT(provider, external_id) DO UPDATE SET "
+                + ", ".join(f"{key} = excluded.{key}" for key in row if key not in {"provider", "external_id"}),
+                row,
+            )
+            saved = conn.execute(
+                "SELECT id FROM resources WHERE provider = ? AND external_id = ?",
+                (PLAY_PROVIDER, row["external_id"]),
+            ).fetchone()
+            resource_id = saved["id"]
+            status = "updated" if previous else "published"
+    return {"resource_id": row["external_id"], "database_id": resource_id, "canonical_url": row["canonical_url"] if "canonical_url" in row else canonical_url, "status": status, "version": payload.version}
+
+
+@app.get("/api/integrations/recursos/activities/{activity_id}")
+def get_play_activity(activity_id: str, request: Request) -> dict:
+    _require_play_ingest(request)
+    external_id = f"{PLAY_PROVIDER}:{activity_id}"
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, active, metadata_json, play_url FROM resources WHERE provider = ? AND external_id = ?",
+            (PLAY_PROVIDER, external_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="activity not found")
+    metadata = json.loads(row["metadata_json"] or "{}")
+    return {"resource_id": external_id, "database_id": row["id"], "canonical_url": row["play_url"], "status": "published" if row["active"] else "unpublished", "version": metadata.get("version", "")}
+
+
+@app.post("/api/integrations/recursos/activities/{activity_id}/unpublish")
+def unpublish_play_activity(activity_id: str, request: Request) -> dict:
+    _require_play_ingest(request)
+    external_id = f"{PLAY_PROVIDER}:{activity_id}"
+    with get_conn() as conn:
+        result = conn.execute(
+            "UPDATE resources SET active = 0, updated_at_source = ? WHERE provider = ? AND external_id = ?",
+            (datetime.now(timezone.utc).isoformat(), PLAY_PROVIDER, external_id),
+        )
+    if not result.rowcount:
+        raise HTTPException(status_code=404, detail="activity not found")
+    return {"resource_id": external_id, "status": "unpublished"}
 
 
 # --- Proxy de miniaturas (evita hotlink a terceros) ---

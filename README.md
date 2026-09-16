@@ -28,6 +28,12 @@ de recursos (índex federat i integracions educatives) continua en aquest servei
 - `GET  /api/teacher/activity-assignments/{id}/results` - informe mínim de resultats per activitat proposada
 - `POST /api/admin/resources/hide` `{ game_key }` - oculta un recurs del llistat públic
 - `GET  /api/resources` - índex federat de recursos (cerca + filtres)
+- `POST /api/integrations/recursos/activities/{id}/publish` - ingesta
+  autenticada e idempotente d'activitats H5P públiques de Play
+- `GET  /api/integrations/recursos/activities/{id}` - estat de sincronització
+  d'una activitat de Play
+- `POST /api/integrations/recursos/activities/{id}/unpublish` - retirada
+  autenticada d'una activitat de Play
 - `GET  /api/admin/sources` - estat de les fonts de recursos (requereix admin)
 
 Identitat anònima per cookie firmada (HMAC, sense Google). El mode admin
@@ -104,6 +110,11 @@ python -m app.cli sources
 
 - Cerca unificada en `GET /api/resources` amb filtres (`q`, `provider`,
   `format`, `subject`, `stage`, `language`, `license`, `license_known`).
+- Play usa el proveïdor `edutictac-play` amb `external_id` estable
+  `edutictac-play:{activity_id}`. La ingesta només s'activa si es configura
+  `PLAY_INGEST_TOKEN`; el token viatja com `Authorization: Bearer ...`.
+- Les activitats privades o de classe es rebutgen. La retirada només marca el
+  recurs com a inactiu, de manera que els favorits i l'històric no es perden.
 - Documentació completa i fonts verificades: vegeu
   `docs/resource-indexers.md` en el repositori del frontend (`sasogu/recursos`).
 
