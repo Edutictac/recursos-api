@@ -7,6 +7,7 @@ actividades y modo admin por token. Identidad anónima por cookie firmada (sin G
 Endpoints:
   GET  /api/health
   GET  /api/preferences
+  GET  /api/teacher/favorites
   POST /api/favorites/toggle   { game_key }
   POST /api/ratings            { game_key, value }
   POST /api/reports            { game_key }
@@ -506,6 +507,32 @@ def list_resources(
         "limit": limit,
         "items": [Resource.from_row(r).to_dict() for r in rows],
     }
+
+
+@app.get("/api/teacher/favorites")
+def list_teacher_favorites(request: Request, limit: int = 200) -> dict:
+    """Resolve los favoritos del docente a recursos completos del índice."""
+    uid = _require_teacher(request)
+    limit = max(1, min(limit, 200))
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.*
+            FROM favorites f
+            JOIN resources r ON (
+                r.external_id = f.game_key
+                OR r.source_url = f.game_key
+                OR r.play_url = f.game_key
+                OR r.reuse_url = f.game_key
+                OR r.download_url = f.game_key
+            )
+            WHERE f.user_id = ? AND r.active = 1
+            ORDER BY f.created_at DESC, r.title
+            LIMIT ?
+            """,
+            (uid, limit),
+        ).fetchall()
+    return {"total": len(rows), "items": [Resource.from_row(row).to_dict() for row in rows]}
 
 
 # --- Ingesta server-to-server de EduTicTac Play ---

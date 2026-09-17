@@ -11,6 +11,7 @@ de recursos (índex federat i integracions educatives) continua en aquest servei
 
 - `GET  /api/health`
 - `GET  /api/preferences` - favorits, valoracions, avisos, resums agregats i flag admin.
+- `GET  /api/teacher/favorites` - recursos complets favorits del docent autenticat.
 - `POST /api/favorites/toggle` `{ game_key }`
 - `POST /api/ratings` `{ game_key, value }` (amb lògica de toggle 1-5)
 - `POST /api/reports` `{ game_key }` (activitat trencada)
