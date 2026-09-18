@@ -11,9 +11,17 @@ H5P_HUB_API = os.environ.get("H5P_HUB_API", "https://hub-api.h5p.org/v1")
 EDUHOOT_BASE_URL = os.environ.get("EDUHOOT_BASE_URL", "https://eduhoot.edutictac.es")
 EDUHOOT_RESOURCES_URL = os.environ.get("EDUHOOT_RESOURCES_URL", EDUHOOT_BASE_URL).rstrip("/")
 EDUHOOT_RESOURCES_TOKEN = os.environ.get("EDUHOOT_RESOURCES_TOKEN", "")
+EDUTICTAC_ID_APP_TOKEN = os.environ.get("EDUTICTAC_ID_APP_TOKEN", "")
 
 # Base del frontend (para construir play_url del visor propio).
 APP_BASE_URL = os.environ.get("RECURSOS_APP_URL", "https://recursos.edutictac.es").rstrip("/")
+
+# Documentos privados subidos por docentes.
+DOCUMENTS_DIR = os.environ.get("RECURSOS_DOCUMENTS_DIR", "/var/lib/recursos-api/documents")
+DOCUMENTS_MAX_BYTES = int(os.environ.get("RECURSOS_DOCUMENTS_MAX_BYTES", str(25 * 1024 * 1024)))
+DOCUMENTS_ALLOWED_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".odt", ".ppt", ".pptx", ".xls", ".xlsx", ".txt",
+}
 
 # Integración server-to-server con EduTicTac Play. Sin token no se habilita la
 # ingesta: así una instalación que no use Play no expone este canal.

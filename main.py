@@ -40,7 +40,7 @@ from edutictac_community.ratelimit import RateLimiter
 from edutictac_community.session import SignedSession
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app import config, oidc
@@ -440,6 +440,124 @@ def _norm(s: str) -> str:
     return re.sub(r"[\u0300-\u036f]", "", s or "").lower()
 
 
+def _teacher_upload_resource(row: sqlite3.Row) -> Resource:
+    return Resource.from_row(row)
+
+
+def _document_filename(request: Request) -> str:
+    raw = request.headers.get("X-Upload-Filename", "documento")
+    try:
+        raw = urllib.parse.unquote(raw)
+    except Exception:  # noqa: BLE001
+        raw = "documento"
+    return Path(raw).name[:180] or "documento"
+
+
+def _document_url(document_id: str) -> str:
+    return f"{config.APP_BASE_URL}/api/documents/{document_id}/download"
+
+
+def _valid_document_proxy(request: Request) -> bool:
+    expected = config.EDUTICTAC_ID_APP_TOKEN
+    authorization = request.headers.get("Authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    return bool(expected and token and compare_digest(token, expected))
+
+
+@app.post("/api/teacher/documents", status_code=201)
+async def upload_teacher_document(request: Request) -> dict:
+    """Guarda un documento docente como recurso privado y descargable por enlace."""
+    teacher_id = _require_teacher(request)
+    filename = _document_filename(request)
+    extension = Path(filename).suffix.lower()
+    if extension not in config.DOCUMENTS_ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="formato de documento no permitido")
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > config.DOCUMENTS_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="documento demasiado grande")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="documento vacío")
+    if len(data) > config.DOCUMENTS_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="documento demasiado grande")
+
+    document_id = secrets.token_urlsafe(16)
+    title = (request.headers.get("X-Upload-Title") or Path(filename).stem).strip()[:200]
+    subject = (request.headers.get("X-Upload-Subject") or "Documentos docentes").strip()[:120]
+    language = (request.headers.get("X-Upload-Language") or "").strip()[:12]
+    storage_dir = Path(config.DOCUMENTS_DIR)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_name = f"{document_id}{extension}"
+    storage_path = storage_dir / storage_name
+    storage_path.write_bytes(data)
+    now = datetime.now(timezone.utc).isoformat()
+    external_id = f"teacher-upload:{document_id}"
+    metadata = {
+        "owner_uid": teacher_id,
+        "storage_name": storage_name,
+        "original_name": filename,
+        "size": len(data),
+    }
+    row = {
+        "provider": "teacher-upload",
+        "external_id": external_id,
+        "title": title or filename,
+        "description": "Documento privado del docente",
+        "author": teacher_id,
+        "language": json.dumps([language] if language else [], ensure_ascii=False),
+        "resource_type": "document",
+        "format": extension[1:],
+        "subject": subject,
+        "tags": "[]",
+        "source_url": _document_url(document_id),
+        "play_url": "",
+        "download_url": _document_url(document_id),
+        "reuse_url": _document_url(document_id),
+        "thumbnail_url": "",
+        "metadata_json": json.dumps(metadata, ensure_ascii=False),
+        "created_at_source": now,
+        "updated_at_source": now,
+        "indexed_at": now,
+        "last_synced_at": now,
+        "active": 1,
+    }
+    columns = ", ".join(row)
+    placeholders = ", ".join(f":{key}" for key in row)
+    with get_conn() as conn:
+        conn.execute(f"INSERT INTO resources ({columns}) VALUES ({placeholders})", row)
+        saved = conn.execute(
+            "SELECT * FROM resources WHERE provider = ? AND external_id = ?",
+            ("teacher-upload", external_id),
+        ).fetchone()
+    return _teacher_upload_resource(saved).to_dict()
+
+
+@app.get("/api/documents/{document_id}/download")
+def download_teacher_document(document_id: str, request: Request) -> FileResponse:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM resources WHERE provider = 'teacher-upload' AND external_id = ? AND active = 1",
+            (f"teacher-upload:{document_id}",),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    metadata = json.loads(row["metadata_json"] or "{}")
+    owner_uid = metadata.get("owner_uid", "")
+    uid, _ = get_session(request)
+    if not _valid_document_proxy(request) and uid != owner_uid:
+        raise HTTPException(status_code=401, detail="autenticación requerida")
+    filename = Path(metadata.get("original_name") or "documento").name
+    path = Path(config.DOCUMENTS_DIR) / metadata.get("storage_name", "")
+    if not path.is_file() or path.parent.resolve() != Path(config.DOCUMENTS_DIR).resolve():
+        raise HTTPException(status_code=404, detail="documento no encontrado")
+    return FileResponse(
+        path,
+        filename=filename,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
 def _eduhoot_resource_matches(resource: Resource, q: str, provider: str, format: str,
                               subject: str, stage: str, language: str, license: str,
                               license_known: bool | None) -> bool:
@@ -504,6 +622,13 @@ def list_resources(
 
     where = ["active = 1"]
     params: list = []
+    uid, _ = get_session(request)
+    teacher_sub = uid[len("oidc:"):] if uid.startswith("oidc:") else ""
+    if teacher_sub:
+        where.append("(provider != 'teacher-upload' OR json_extract(metadata_json, '$.owner_uid') = ?)")
+        params.append(uid)
+    else:
+        where.append("provider != 'teacher-upload'")
 
     if provider:
         where.append("provider = ?")
@@ -550,10 +675,6 @@ def list_resources(
 
     indexed = [Resource.from_row(row) for row in rows]
     indexed_ids = {resource.external_id for resource in indexed}
-    teacher_sub = ""
-    uid, _ = get_session(request)
-    if uid.startswith("oidc:"):
-        teacher_sub = uid[len("oidc:"):]
     dynamic = []
     if not provider or provider == "eduhoot":
         try:
@@ -597,10 +718,11 @@ def list_teacher_favorites(request: Request, limit: int = 200) -> dict:
                 OR r.download_url = f.game_key
             )
             WHERE f.user_id = ? AND r.active = 1
+              AND (r.provider != 'teacher-upload' OR json_extract(r.metadata_json, '$.owner_uid') = ?)
             ORDER BY f.created_at DESC, r.title
             LIMIT ?
             """,
-            (uid, limit),
+            (uid, uid, limit),
         ).fetchall()
     resources = [Resource.from_row(row) for row in rows]
     known = {resource.external_id for resource in resources}

@@ -12,6 +12,10 @@ de recursos (índex federat i integracions educatives) continua en aquest servei
 - `GET  /api/health`
 - `GET  /api/preferences` - favorits, valoracions, avisos, resums agregats i flag admin.
 - `GET  /api/teacher/favorites` - recursos complets favorits del docent autenticat.
+- `POST /api/teacher/documents` - puja un document privat del docent (PDF, Word,
+  ODT, presentacions, fulls de càlcul o TXT; màxim 25 MB).
+- `GET  /api/documents/{id}/download` - serveix un document pujat per a una
+  assignació d'aula.
 - `POST /api/favorites/toggle` `{ game_key }`
 - `POST /api/ratings` `{ game_key, value }` (amb lògica de toggle 1-5)
 - `POST /api/reports` `{ game_key }` (activitat trencada)
