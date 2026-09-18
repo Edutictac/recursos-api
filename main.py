@@ -20,6 +20,7 @@ Endpoints:
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -42,6 +43,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app import config, oidc
+from app.catalog_import import import_catalog
 from app.db import init_index_schema
 from app.httpclient import get_bytes
 from app.models import Resource
@@ -54,6 +56,7 @@ COOKIE_SECURE = os.environ.get("RECURSOS_COOKIE_SECURE", "1").lower() not in {"0
 EDUTICTAC_ID_API_URL = os.environ.get("EDUTICTAC_ID_API_URL", "").rstrip("/")
 EDUTICTAC_ID_TEACHER_TOKEN = os.environ.get("EDUTICTAC_ID_TEACHER_TOKEN", "")
 ALLOWED_AUTH_NEXT_HOSTS = {"edutictac.es", "recursos.edutictac.es"}
+RESOURCES_IMPORT_TOKEN = os.environ.get("RESOURCES_IMPORT_TOKEN", "")
 
 RATE_WINDOW = 60
 RATE_MAX = 60
@@ -476,6 +479,21 @@ def list_resources(
         "limit": limit,
         "items": [Resource.from_row(r).to_dict() for r in rows],
     }
+
+
+@app.post("/api/internal/import-catalog")
+async def import_catalog_endpoint(request: Request) -> dict:
+    """Ingesta del catálogo federado que Commons descarga y verifica por hash."""
+    supplied = request.headers.get("Authorization", "")
+    expected = f"Bearer {RESOURCES_IMPORT_TOKEN}" if RESOURCES_IMPORT_TOKEN else ""
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid import token")
+    try:
+        body = await request.json()
+        result = import_catalog(body.get("catalog"))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
 
 
 # --- Proxy de miniaturas (evita hotlink a terceros) ---
