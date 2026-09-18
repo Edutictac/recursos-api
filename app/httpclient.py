@@ -41,6 +41,14 @@ def get_json(url: str, params: dict[str, Any] | None = None) -> Any:
     raise last_exc if last_exc else RuntimeError(f"GET {url} failed")
 
 
+def get_json_with_headers(url: str, headers: dict[str, str], params: dict[str, Any] | None = None) -> Any:
+    """GET JSON autenticado para integraciones internas."""
+    with _client() as client:
+        response = client.get(url, params=params or {}, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
 def get_text(url: str) -> str:
     """GET + texto (UTF-8) con reintentos, para fuentes XML/HTML."""
     last_exc: Exception | None = None

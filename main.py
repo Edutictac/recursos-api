@@ -45,8 +45,9 @@ from pydantic import BaseModel
 
 from app import config, oidc
 from app.db import init_index_schema
-from app.httpclient import get_bytes
+from app.httpclient import get_bytes, get_json_with_headers
 from app.models import Resource
+from app.providers.eduhoot import EduHootProvider
 
 DB_PATH = os.environ.get("RECURSOS_DB", "/var/lib/recursos-api/recursos.db")
 SESSION_SECRET = os.environ.get("RECURSOS_SECRET", "")
@@ -439,8 +440,54 @@ def _norm(s: str) -> str:
     return re.sub(r"[\u0300-\u036f]", "", s or "").lower()
 
 
+def _eduhoot_resource_matches(resource: Resource, q: str, provider: str, format: str,
+                              subject: str, stage: str, language: str, license: str,
+                              license_known: bool | None) -> bool:
+    if provider and resource.provider != provider:
+        return False
+    if format and resource.format != format:
+        return False
+    if subject and resource.subject != subject:
+        return False
+    if stage and resource.educational_stage != stage:
+        return False
+    if language and language not in resource.language:
+        return False
+    if license and resource.license != license:
+        return False
+    if license_known is not None and resource.license_known != license_known:
+        return False
+    term = _norm(q).strip()
+    if term:
+        haystack = _norm(" ".join([
+            resource.title, resource.title_ca, resource.description,
+            resource.description_ca, resource.author, " ".join(resource.tags),
+            resource.external_id,
+        ]))
+        if term not in haystack:
+            return False
+    return True
+
+
+def _load_eduhoot_resources(teacher_sub: str) -> list[Resource]:
+    if not config.EDUHOOT_RESOURCES_TOKEN:
+        return []
+    payload = get_json_with_headers(
+        f"{config.EDUHOOT_RESOURCES_URL}/api/integrations/recursos/quizzes",
+        {
+            "Authorization": f"Bearer {config.EDUHOOT_RESOURCES_TOKEN}",
+            **({"X-Teacher-Sub": teacher_sub} if teacher_sub else {}),
+        },
+    )
+    if not isinstance(payload, list):
+        raise ValueError("catálogo EduHoot no válido")
+    provider = EduHootProvider()
+    return [provider.normalize(raw) for raw in payload if provider._is_educational(raw)]
+
+
 @app.get("/api/resources")
 def list_resources(
+    request: Request,
     q: str = "",
     provider: str = "",
     format: str = "",
@@ -497,15 +544,34 @@ def list_resources(
             f"SELECT COUNT(*) AS n FROM resources{where_sql}", params
         ).fetchone()["n"]
         rows = conn.execute(
-            f"SELECT * FROM resources{where_sql} ORDER BY title LIMIT ? OFFSET ?",
-            params + [limit, offset],
+            f"SELECT * FROM resources{where_sql} ORDER BY title",
+            params,
         ).fetchall()
 
+    indexed = [Resource.from_row(row) for row in rows]
+    indexed_ids = {resource.external_id for resource in indexed}
+    teacher_sub = ""
+    uid, _ = get_session(request)
+    if uid.startswith("oidc:"):
+        teacher_sub = uid[len("oidc:"):]
+    dynamic = []
+    if not provider or provider == "eduhoot":
+        try:
+            dynamic = _load_eduhoot_resources(teacher_sub)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("EduHoot catalog unavailable: %s", exc)
+    for resource in dynamic:
+        if resource.external_id in indexed_ids:
+            continue
+        if _eduhoot_resource_matches(resource, q, provider, format, subject, stage, language, license, license_known):
+            indexed.append(resource)
+    indexed.sort(key=lambda resource: resource.title.lower())
+    page = indexed[offset:offset + limit]
     return {
-        "total": total,
+        "total": len(indexed),
         "offset": offset,
         "limit": limit,
-        "items": [Resource.from_row(r).to_dict() for r in rows],
+        "items": [resource.to_dict() for resource in page],
     }
 
 
@@ -515,6 +581,10 @@ def list_teacher_favorites(request: Request, limit: int = 200) -> dict:
     uid = _require_teacher(request)
     limit = max(1, min(limit, 200))
     with get_conn() as conn:
+        favorite_keys = [row["game_key"] for row in conn.execute(
+            "SELECT game_key FROM favorites WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (uid, limit),
+        ).fetchall()]
         rows = conn.execute(
             """
             SELECT r.*
@@ -532,7 +602,23 @@ def list_teacher_favorites(request: Request, limit: int = 200) -> dict:
             """,
             (uid, limit),
         ).fetchall()
-    return {"total": len(rows), "items": [Resource.from_row(row).to_dict() for row in rows]}
+    resources = [Resource.from_row(row) for row in rows]
+    known = {resource.external_id for resource in resources}
+    teacher_sub = uid[len("oidc:"):] if uid.startswith("oidc:") else ""
+    try:
+        dynamic = _load_eduhoot_resources(teacher_sub)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("EduHoot favorites unavailable: %s", exc)
+        dynamic = []
+    favorite_key_set = set(favorite_keys)
+    resources.extend(
+        resource for resource in dynamic
+        if resource.external_id not in known
+        and (resource.external_id in favorite_key_set
+             or resource.source_url in favorite_key_set
+             or resource.play_url in favorite_key_set)
+    )
+    return {"total": len(resources), "items": [resource.to_dict() for resource in resources[:limit]]}
 
 
 # --- Ingesta server-to-server de EduTicTac Play ---
