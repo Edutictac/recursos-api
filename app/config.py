@@ -13,6 +13,15 @@ EDUHOOT_BASE_URL = os.environ.get("EDUHOOT_BASE_URL", "https://eduhoot.edutictac
 # Base del frontend (para construir play_url del visor propio).
 APP_BASE_URL = os.environ.get("RECURSOS_APP_URL", "https://recursos.edutictac.es").rstrip("/")
 
+# Integración server-to-server con EduTicTac Play. Sin token no se habilita la
+# ingesta: así una instalación que no use Play no expone este canal.
+PLAY_INGEST_TOKEN = os.environ.get("PLAY_INGEST_TOKEN", "")
+PLAY_ALLOWED_HOSTS = {
+    host.strip().lower()
+    for host in os.environ.get("PLAY_ALLOWED_HOSTS", "edutictac.es,play.edutictac.es").split(",")
+    if host.strip()
+}
+
 # Caché de descripciones JClic (evita re-descargar el .jclic en cada sync).
 JCLIC_DESCRIPTIONS_CACHE = os.environ.get(
     "JCLIC_DESCRIPTIONS_CACHE", "/var/lib/recursos-api/jclic-descriptions.json"
