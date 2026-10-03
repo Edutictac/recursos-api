@@ -413,6 +413,7 @@ app.include_router(
         key_field="game_key",
         db_key_column="game_key",
         admin_hide_path="/admin/resources/hide",
+        admin_unhide_path="/admin/resources/unhide",
     ),
     prefix="/api",
 )
