@@ -21,6 +21,7 @@ Endpoints:
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app import config, oidc
+from app.catalog_import import import_catalog
 from app.db import init_index_schema
 from app.httpclient import get_bytes, get_json_with_headers
 from app.models import Resource
@@ -57,6 +59,7 @@ COOKIE_SECURE = os.environ.get("RECURSOS_COOKIE_SECURE", "1").lower() not in {"0
 EDUTICTAC_ID_API_URL = os.environ.get("EDUTICTAC_ID_API_URL", "").rstrip("/")
 EDUTICTAC_ID_TEACHER_TOKEN = os.environ.get("EDUTICTAC_ID_TEACHER_TOKEN", "")
 ALLOWED_AUTH_NEXT_HOSTS = {"edutictac.es", "recursos.edutictac.es"}
+RESOURCES_IMPORT_TOKEN = os.environ.get("RESOURCES_IMPORT_TOKEN", "")
 
 RATE_WINDOW = 60
 RATE_MAX = 60
@@ -412,6 +415,7 @@ app.include_router(
         key_field="game_key",
         db_key_column="game_key",
         admin_hide_path="/admin/resources/hide",
+        admin_unhide_path="/admin/resources/unhide",
     ),
     prefix="/api",
 )
@@ -741,6 +745,21 @@ def list_teacher_favorites(request: Request, limit: int = 200) -> dict:
              or resource.play_url in favorite_key_set)
     )
     return {"total": len(resources), "items": [resource.to_dict() for resource in resources[:limit]]}
+
+
+@app.post("/api/internal/import-catalog")
+async def import_catalog_endpoint(request: Request) -> dict:
+    """Ingesta del catálogo federado que Commons descarga y verifica por hash."""
+    supplied = request.headers.get("Authorization", "")
+    expected = f"Bearer {RESOURCES_IMPORT_TOKEN}" if RESOURCES_IMPORT_TOKEN else ""
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid import token")
+    try:
+        body = await request.json()
+        result = import_catalog(body.get("catalog"))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
 
 
 # --- Ingesta server-to-server de EduTicTac Play ---
