@@ -779,11 +779,27 @@ def _require_play_ingest(request: Request) -> None:
 
 
 def _play_url(value: str, field: str) -> str:
-    parsed = urllib.parse.urlparse(value)
-    local_http = parsed.scheme == "http" and parsed.hostname.lower() in {"localhost", "127.0.0.1"}
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port or (80 if parsed.scheme == "http" else 443)
+        public = urllib.parse.urlsplit(config.PLAY_PUBLIC_URL)
+        public_port = public.port or 80
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{field} is not a valid URL")
+    configured_http = (
+        parsed.scheme == public.scheme == "http"
+        and bool(public.hostname)
+        and hostname == public.hostname.lower()
+        and port == public_port
+        and not (public.username or public.password or public.query or public.fragment)
+    )
+    local_http = parsed.scheme == "http" and (
+        hostname in {"localhost", "127.0.0.1"} or configured_http
+    )
     if (parsed.scheme != "https" and not local_http) or parsed.username or parsed.password or not parsed.hostname:
         raise HTTPException(status_code=400, detail=f"{field} must be an HTTPS URL")
-    if parsed.hostname.lower() not in config.PLAY_ALLOWED_HOSTS:
+    if hostname not in config.PLAY_ALLOWED_HOSTS:
         raise HTTPException(status_code=400, detail=f"{field} host is not allowed")
     return value[:2000]
 

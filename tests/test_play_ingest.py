@@ -1,5 +1,6 @@
 import importlib
 import sys
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ def load_main(tmp_path, monkeypatch):
     monkeypatch.setenv("RECURSOS_COOKIE_SECURE", "0")
     monkeypatch.setenv("PLAY_INGEST_TOKEN", "play-test-token")
     monkeypatch.setenv("PLAY_ALLOWED_HOSTS", "play.example.test")
+    monkeypatch.delenv("PLAY_PUBLIC_URL", raising=False)
     import app.config
     import app.db
 
@@ -89,3 +91,39 @@ def test_play_publish_rejects_wrong_token_and_private_activity(tmp_path, monkeyp
         assert exc.status_code == 400
     else:
         raise AssertionError("private activity was accepted")
+
+
+def test_play_publish_accepts_configured_classroom_http_origin(tmp_path, monkeypatch):
+    main = load_main(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.config, "PLAY_ALLOWED_HOSTS", {"edutictac.local"})
+    monkeypatch.setattr(main.config, "PLAY_PUBLIC_URL", "http://edutictac.local:8084")
+    data = payload()
+    data["canonical_url"] = "http://edutictac.local:8084/play/Ab12Cd34"
+    data["download_url"] = "http://edutictac.local:8084/api/activities/Ab12Cd34/download"
+    result = main.publish_play_activity("Ab12Cd34", main.PlayResourcePublishIn(**data), request())
+    assert result["status"] == "published"
+
+
+@pytest.mark.parametrize("url", [
+    "http://edutictac.local:8085/play/test",
+    "http://other.local:8084/play/test",
+    "http://user:password@edutictac.local:8084/play/test",
+    "http://edutictac.local:not-a-port/play/test",
+    "http:///play/test",
+    "javascript:alert(1)",
+])
+def test_classroom_http_exception_does_not_admit_other_origins(tmp_path, monkeypatch, url):
+    main = load_main(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.config, "PLAY_ALLOWED_HOSTS", {"edutictac.local", "other.local"})
+    monkeypatch.setattr(main.config, "PLAY_PUBLIC_URL", "http://edutictac.local:8084")
+    with pytest.raises(main.HTTPException) as error:
+        main._play_url(url, "canonical_url")
+    assert error.value.status_code == 400
+
+
+def test_http_requires_explicit_classroom_origin(tmp_path, monkeypatch):
+    main = load_main(tmp_path, monkeypatch)
+    monkeypatch.setattr(main.config, "PLAY_ALLOWED_HOSTS", {"edutictac.local"})
+    with pytest.raises(main.HTTPException) as error:
+        main._play_url("http://edutictac.local:8084/play/test", "canonical_url")
+    assert error.value.status_code == 400

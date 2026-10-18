@@ -93,6 +93,12 @@ PLAY_ALLOWED_HOSTS=edutictac.es,play.edutictac.es
 Els secrets d'OIDC i sessió es guarden fora del repositori, en el fitxer
 d'entorn del servei.
 
+En un aula Commons que publica Play per HTTP, configura també `PLAY_PUBLIC_URL`
+amb l'adreça real (per exemple `http://edutictac.local:8084`) i inclou el seu
+host en `PLAY_ALLOWED_HOSTS`. Només s'admet HTTP per eixe origen exacte
+(host i port), a més de la compatibilitat local amb localhost/127.0.0.1.
+Sense esta configuració es continua exigint HTTPS als altres hosts.
+
 ## Dades migrades
 
 `seed.json` conté les dades exportades de Firestore el 2026-09-04:

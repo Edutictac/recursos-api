@@ -26,6 +26,9 @@ DOCUMENTS_ALLOWED_EXTENSIONS = {
 # Integración server-to-server con EduTicTac Play. Sin token no se habilita la
 # ingesta: así una instalación que no use Play no expone este canal.
 PLAY_INGEST_TOKEN = os.environ.get("PLAY_INGEST_TOKEN", "")
+# A classroom can publish Play over HTTP on its explicitly configured origin.
+# Public deployments keep HTTPS unless they opt into their own HTTP origin.
+PLAY_PUBLIC_URL = os.environ.get("PLAY_PUBLIC_URL", "").rstrip("/")
 PLAY_ALLOWED_HOSTS = {
     host.strip().lower()
     for host in os.environ.get("PLAY_ALLOWED_HOSTS", "edutictac.es,play.edutictac.es").split(",")
