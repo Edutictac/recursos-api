@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app app
 COPY main.py .
 COPY seed.json .
+COPY LICENSE README.md Dockerfile ./
 
 RUN useradd --create-home --uid 1000 recursos \
     && mkdir -p /data \

@@ -130,3 +130,23 @@ Tests: `python -m pytest tests/` (requereix `httpx`, `defusedxml`, `pytest`).
 ## Llicència
 
 GNU Affero General Public License v3.0 (AGPL-3.0).
+
+
+## Publicacions de Llibres
+
+`app/books.py` reutilitza la mateixa SQLite: fitxa `Resource`, metadades i fitxers
+públics s'actualitzen en una transacció. No es necessita un servei nou.
+`GET /api/llibres/books` i `/api/llibres/public/{id}/{path}` són públics.
+`/api/internal/llibres/{draft}` exigeix el token d'aplicació existent i la identitat
+individual proporcionada pel proxy de Commons; no s'ha de cridar des del navegador.
+El servidor genera HTML sense JavaScript a partir de pàgines SVG validades i PNG
+normalitzats. L'editable `.elpx` és un adjunt opcional; no s'executa.
+
+Variables: `LLIBRES_PUBLIC_BASE_URL` (origen HTTP/S públic del banc, sense ruta) i
+`LLIBRES_PUBLIC_MAX_BYTES` (quota global, 2 GiB per defecte). El volum `/data`
+existent conserva tot el contingut en `recursos.db`; incloure'l en les còpies de
+seguretat mitjançant SQLite backup. Retirar elimina els BLOB públics i desactiva la
+fitxa. El codi corresponent es descarrega en `/api/llibres/source.zip`.
+
+El contracte complet i l'activació estan documentats en
+`edutictac-llibres/docs/RESOURCE_PUBLICATION.md`. Proves: `pytest -q tests/test_books.py`.

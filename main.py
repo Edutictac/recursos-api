@@ -47,6 +47,7 @@ from app import config, oidc
 from app.db import init_index_schema
 from app.httpclient import get_bytes, get_json_with_headers
 from app.models import Resource
+from app.books import Publications
 from app.providers.eduhoot import EduHootProvider
 
 DB_PATH = os.environ.get("RECURSOS_DB", "/var/lib/recursos-api/recursos.db")
@@ -163,6 +164,10 @@ def _seed(conn: sqlite3.Connection) -> None:
 
 init_db()
 init_index_schema()
+book_publications = Publications(get_conn,
+    os.environ.get("LLIBRES_PUBLIC_BASE_URL", config.APP_BASE_URL),
+    config.EDUTICTAC_ID_APP_TOKEN)
+app.include_router(book_publications.router())
 
 
 # --- Sesión firmada (cookie) ---

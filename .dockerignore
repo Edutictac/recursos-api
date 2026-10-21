@@ -1,4 +1,7 @@
 .git
+.env*
+*.key
+*.pem
 .pytest_cache
 __pycache__
 *.pyc
