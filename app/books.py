@@ -277,6 +277,8 @@ class Publications:
               CREATE TABLE IF NOT EXISTS llibres_files (
               book TEXT NOT NULL, path TEXT NOT NULL, body BLOB NOT NULL, mime TEXT NOT NULL,
               PRIMARY KEY(book,path));''')
+        from .book_reviews import Reviews
+        self.reviews = Reviews(self)
 
     def actor(self, request):
         supplied = request.headers.get("authorization", "")
@@ -301,36 +303,42 @@ class Publications:
         meta, files = compile_book(raw)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            old = db.execute("SELECT * FROM llibres_publications WHERE id=?", (key,)).fetchone()
-            if old and old["digest"] == digest and old["active"]:
-                return self.result(old)
-            if expected != f'"{old["revision"] if old else 0}"':
-                fail("publication_conflict", 412)
-            size = sum(len(body) for body, _ in files.values())
-            total = db.execute("SELECT coalesce(sum(length(body)),0) FROM llibres_files WHERE book!=?", (key,)).fetchone()[0]
-            owned = db.execute("SELECT count(*) FROM llibres_publications WHERE owner=? AND active=1 AND id!=?", (actor, key)).fetchone()[0]
-            owner_bytes = db.execute("SELECT coalesce(sum(length(f.body)),0) FROM llibres_files f JOIN llibres_publications p ON p.id=f.book WHERE p.owner=? AND p.id!=?", (actor, key)).fetchone()[0]
-            if total + size > self.global_limit or owner_bytes + size > 200 * 1024 * 1024 or owned >= 50:
-                fail("publication_limit", 413)
-            revision = old["revision"] + 1 if old else 1
-            db.execute("INSERT INTO llibres_publications VALUES (?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,metadata=excluded.metadata,active=1", (key, actor, draft, revision, digest, json.dumps(meta)))
-            db.execute("DELETE FROM llibres_files WHERE book=?", (key,))
-            db.executemany("INSERT INTO llibres_files VALUES (?,?,?,?)", [(key, name, body, mime) for name, (body, mime) in files.items()])
-            url = self.base + "/api/llibres/public/" + key + "/"
-            now = datetime.now(timezone.utc).isoformat()
-            resource = Resource(provider=PROVIDER, external_id=key, title=meta["title"],
-                description=meta["description"], author=meta["author"], license=meta["license"], license_known=True,
-                language=[meta["language"]], resource_type="book", format="llibres", subject="Lengua",
-                educational_stage="Primaria", play_url=url + "index.html", source_url=url + "index.html",
-                download_url=url + "source.elpx" if meta["editable"] else "", reuse_url=url + "source.elpx" if meta["editable"] else "",
-                thumbnail_url=url + "cover.png", metadata_json={"page_count":meta["page_count"],"revision":revision},
-                indexed_at=now,last_synced_at=now).to_row()
-            columns = list(resource)
-            db.execute("INSERT INTO resources (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ") ON CONFLICT(provider,external_id) DO UPDATE SET " + ",".join(c + "=excluded." + c for c in columns if c not in ("provider", "external_id")), tuple(resource.values()))
-            return self.result(db.execute("SELECT * FROM llibres_publications WHERE id=?", (key,)).fetchone())
+            return self.write_publication(db, actor, draft, digest, meta, files, expected)
 
+    def write_publication(self, db, actor, draft, digest, meta, files, expected):
+        key = self.key(actor, draft)
+        old = db.execute("SELECT * FROM llibres_publications WHERE id=?", (key,)).fetchone()
+        if old and old["digest"] == digest and old["active"]:
+            return self.result(old)
+        if expected != f'"{old["revision"] if old else 0}"':
+            fail("publication_conflict", 412)
+        size = sum(len(body) for body, _ in files.values())
+        total = db.execute("SELECT coalesce(sum(length(body)),0) FROM llibres_files WHERE book!=?", (key,)).fetchone()[0]
+        total += db.execute("SELECT coalesce(sum(length(body)),0) FROM llibres_review_files").fetchone()[0]
+        owned = db.execute("SELECT count(*) FROM llibres_publications WHERE owner=? AND active=1 AND id!=?", (actor, key)).fetchone()[0]
+        owner_bytes = db.execute("SELECT coalesce(sum(length(f.body)),0) FROM llibres_files f JOIN llibres_publications p ON p.id=f.book WHERE p.owner=? AND p.id!=?", (actor, key)).fetchone()[0]
+        owner_bytes += db.execute("SELECT coalesce(sum(length(f.body)),0) FROM llibres_review_files f JOIN llibres_submissions s ON s.id=f.book WHERE s.owner=?", (actor,)).fetchone()[0]
+        if total + size > self.global_limit or owner_bytes + size > 200 * 1024 * 1024 or owned >= 50:
+            fail("publication_limit", 413)
+        revision = old["revision"] + 1 if old else 1
+        db.execute("INSERT INTO llibres_publications VALUES (?,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,digest=excluded.digest,metadata=excluded.metadata,active=1", (key, actor, draft, revision, digest, json.dumps(meta)))
+        db.execute("DELETE FROM llibres_files WHERE book=?", (key,))
+        db.executemany("INSERT INTO llibres_files VALUES (?,?,?,?)", [(key, name, body, mime) for name, (body, mime) in files.items()])
+        url = self.base + "/api/llibres/public/" + key + "/"
+        now = datetime.now(timezone.utc).isoformat()
+        resource = Resource(provider=PROVIDER, external_id=key, title=meta["title"],
+            description=meta["description"], author=meta["author"], license=meta["license"], license_known=True,
+            language=[meta["language"]], resource_type="book", format="llibres", subject="Lengua",
+            educational_stage="Primaria", play_url=url + "index.html", source_url=url + "index.html",
+            download_url=url + "source.elpx" if meta["editable"] else "", reuse_url=url + "source.elpx" if meta["editable"] else "",
+            thumbnail_url=url + "cover.png", metadata_json={"page_count":meta["page_count"],"revision":revision},
+            indexed_at=now,last_synced_at=now).to_row()
+        columns = list(resource)
+        db.execute("INSERT INTO resources (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ") ON CONFLICT(provider,external_id) DO UPDATE SET " + ",".join(c + "=excluded." + c for c in columns if c not in ("provider", "external_id")), tuple(resource.values()))
+        return self.result(db.execute("SELECT * FROM llibres_publications WHERE id=?", (key,)).fetchone())
     def router(self):
         router = APIRouter()
+        router.include_router(self.reviews.router())
 
         @router.get("/api/internal/llibres/{draft}")
         def state(draft: str, request: Request):

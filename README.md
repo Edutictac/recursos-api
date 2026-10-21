@@ -150,3 +150,9 @@ fitxa. El codi corresponent es descarrega en `/api/llibres/source.zip`.
 
 El contracte complet i l'activació estan documentats en
 `edutictac-llibres/docs/RESOURCE_PUBLICATION.md`. Proves: `pytest -q tests/test_books.py`.
+
+Les revisions de l’alumnat es guarden privades en `llibres_submissions` i
+`llibres_review_files`, en la mateixa SQLite. L’aprovació publica la còpia exacta
+i registra la decisió en una transacció. `app/book_reviews.py` només accepta la
+identitat i l’aula verificades pel proxy de Commons. La quota inclou fitxers
+públics i privats. Proves addicionals: `pytest -q tests/test_book_reviews.py`.
