@@ -1,5 +1,4 @@
 """Importador del catálogo federado publicado por Commons."""
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -10,14 +9,14 @@ from .db import get_conn
 from .models import Resource, SyncRun
 from .sync import _insert_run_sql, _insert_sql, _signature, _update_sql
 
-_RESOURCE_FIELDS = {
+_RESOURCE_FIELDS = frozenset({
     "provider", "external_id", "title", "title_ca", "title_en", "description",
     "description_ca", "description_en", "author", "license", "license_known",
     "language", "resource_type", "format", "subject", "educational_stage",
     "educational_level", "tags", "source_url", "play_url", "download_url",
     "reuse_url", "thumbnail_url", "metadata_json", "created_at_source",
     "updated_at_source", "active",
-}
+})
 
 
 def _now() -> str:
@@ -45,10 +44,10 @@ def _resource(item: dict[str, Any], now: str) -> Resource:
 
 
 def import_catalog(catalog: dict[str, Any]) -> dict[str, int]:
-    """Importa un catálogo completo con upsert incremental por proveedor/id."""
     if not isinstance(catalog, dict) or not isinstance(catalog.get("items"), list):
         raise ValueError("el catálogo debe contener un array items")
-    grouped: dict[str, list[Resource]] = defaultdict(list)
+
+    grouped = defaultdict(list)
     errors = 0
     now = _now()
     for item in catalog["items"]:
@@ -65,9 +64,12 @@ def import_catalog(catalog: dict[str, Any]) -> dict[str, int]:
         for provider, resources in grouped.items():
             run = SyncRun(provider=provider)
             run.start()
-            existing = {row["external_id"]: dict(row) for row in conn.execute(
-                "SELECT * FROM resources WHERE provider = ?", (provider,)
-            )}
+            existing = {
+                row["external_id"]: dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM resources WHERE provider = ?", (provider,)
+                )
+            }
             for resource in resources:
                 run.fetched += 1
                 row = resource.to_row()
@@ -89,15 +91,22 @@ def import_catalog(catalog: dict[str, Any]) -> dict[str, int]:
                     unchanged += 1
                     run.unchanged += 1
                 existing[resource.external_id] = row
+
             result = conn.execute(
-                "UPDATE resources SET active = 0 WHERE provider = ? AND active = 1 "
-                "AND last_synced_at < ?", (provider, now)
+                "UPDATE resources SET active = 0 "
+                "WHERE provider = ? AND active = 1 AND last_synced_at < ?",
+                (provider, now),
             )
             deactivated += result.rowcount
             run.finish("ok")
             conn.execute(_insert_run_sql(), run.to_row())
+
     return {
-        "total": len(catalog["items"]), "providers": len(grouped),
-        "created": created, "updated": updated, "unchanged": unchanged,
-        "deactivated": deactivated, "errors": errors,
+        "total": len(catalog["items"]),
+        "providers": len(grouped),
+        "created": created,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deactivated": deactivated,
+        "errors": errors,
     }

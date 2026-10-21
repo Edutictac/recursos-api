@@ -93,6 +93,12 @@ PLAY_ALLOWED_HOSTS=edutictac.es,play.edutictac.es
 Els secrets d'OIDC i sessió es guarden fora del repositori, en el fitxer
 d'entorn del servei.
 
+En un aula Commons que publica Play per HTTP, configura també `PLAY_PUBLIC_URL`
+amb l'adreça real (per exemple `http://edutictac.local:8084`) i inclou el seu
+host en `PLAY_ALLOWED_HOSTS`. Només s'admet HTTP per eixe origen exacte
+(host i port), a més de la compatibilitat local amb localhost/127.0.0.1.
+Sense esta configuració es continua exigint HTTPS als altres hosts.
+
 ## Dades migrades
 
 `seed.json` conté les dades exportades de Firestore el 2026-09-04:
@@ -156,3 +162,17 @@ Les revisions de l’alumnat es guarden privades en `llibres_submissions` i
 i registra la decisió en una transacció. `app/book_reviews.py` només accepta la
 identitat i l’aula verificades pel proxy de Commons. La quota inclou fitxers
 públics i privats. Proves addicionals: `pytest -q tests/test_book_reviews.py`.
+
+## Catàleg local i exportació interna
+
+Amb `EDUHOOT_LOCAL_CATALOG=1`, les activitats d’EduHoot es consulten al servei
+local i no es reutilitzen els identificadors del catàleg públic descarregat.
+La deduplicació usa el proveïdor i l’identificador, conservant altres recursos.
+
+`POST /api/internal/export-catalog` regenera `games.json` i `games-home.json`
+a partir de l’índex actual, incloses les etiquetes. Requerix l’autenticació amb
+`RESOURCES_IMPORT_TOKEN` i una carpeta de destí configurada al servidor amb
+`RECURSOS_EXPORT_DIR`; el client no pot triar la ruta. Sense configuració retorna
+503 i sense autenticació vàlida retorna 401, sense escriure fitxers.
+
+Proves: `pytest -q tests/test_local_eduhoot_catalog.py tests/test_catalog_export.py`.
