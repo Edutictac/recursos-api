@@ -21,6 +21,7 @@ Endpoints:
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -44,6 +45,8 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app import config, oidc
+from app.catalog_import import import_catalog
+from app.export import export_catalog
 from app.db import init_index_schema
 from app.httpclient import get_bytes, get_json_with_headers
 from app.models import Resource
@@ -57,6 +60,8 @@ AUTH_NEXT_COOKIE = "recursos_auth_next"
 COOKIE_SECURE = os.environ.get("RECURSOS_COOKIE_SECURE", "1").lower() not in {"0", "false", "no"}
 EDUTICTAC_ID_API_URL = os.environ.get("EDUTICTAC_ID_API_URL", "").rstrip("/")
 EDUTICTAC_ID_TEACHER_TOKEN = os.environ.get("EDUTICTAC_ID_TEACHER_TOKEN", "")
+RESOURCES_IMPORT_TOKEN = os.environ.get("RESOURCES_IMPORT_TOKEN", "")
+EXPORT_CATALOG_DIR = os.environ.get("RECURSOS_EXPORT_DIR", "").strip()
 ALLOWED_AUTH_NEXT_HOSTS = {"edutictac.es", "recursos.edutictac.es"}
 
 RATE_WINDOW = 60
@@ -626,6 +631,10 @@ def list_resources(
     offset = max(0, offset)
 
     where = ["active = 1"]
+    # In a local Commons deployment, EduHoot IDs belong to the local database.
+    # The downloaded index carries IDs/URLs from the public server instead.
+    if os.environ.get("EDUHOOT_LOCAL_CATALOG") == "1":
+        where.append("provider != 'eduhoot'")
     params: list = []
     uid, _ = get_session(request)
     teacher_sub = uid[len("oidc:"):] if uid.startswith("oidc:") else ""
@@ -679,7 +688,7 @@ def list_resources(
         ).fetchall()
 
     indexed = [Resource.from_row(row) for row in rows]
-    indexed_ids = {resource.external_id for resource in indexed}
+    indexed_ids = {(resource.provider, resource.external_id) for resource in indexed}
     dynamic = []
     if not provider or provider == "eduhoot":
         try:
@@ -687,7 +696,7 @@ def list_resources(
         except Exception as exc:  # noqa: BLE001
             logger.warning("EduHoot catalog unavailable: %s", exc)
     for resource in dynamic:
-        if resource.external_id in indexed_ids:
+        if (resource.provider, resource.external_id) in indexed_ids:
             continue
         if _eduhoot_resource_matches(resource, q, provider, format, subject, stage, language, license, license_known):
             indexed.append(resource)
@@ -699,6 +708,33 @@ def list_resources(
         "limit": limit,
         "items": [resource.to_dict() for resource in page],
     }
+
+
+@app.post("/api/internal/import-catalog")
+async def import_catalog_endpoint(request: Request) -> dict:
+    """Endpoint interno para conectar Commons con el índice local."""
+    supplied = request.headers.get("Authorization", "")
+    expected = f"Bearer {RESOURCES_IMPORT_TOKEN}" if RESOURCES_IMPORT_TOKEN else ""
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid import token")
+    try:
+        body = await request.json()
+        result = import_catalog(body.get("catalog"))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@app.post("/api/internal/export-catalog")
+async def export_catalog_endpoint(request: Request) -> dict:
+    """Endpoint interno para regenerar games.json/games-home.json tras un import."""
+    supplied = request.headers.get("Authorization", "")
+    expected = f"Bearer {RESOURCES_IMPORT_TOKEN}" if RESOURCES_IMPORT_TOKEN else ""
+    if not expected or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="invalid import token")
+    if not EXPORT_CATALOG_DIR:
+        raise HTTPException(status_code=503, detail="export-catalog is not configured")
+    return export_catalog(out_dir=EXPORT_CATALOG_DIR)
 
 
 @app.get("/api/teacher/favorites")

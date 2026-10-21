@@ -58,20 +58,23 @@ def _to_game(r: Resource) -> dict:
         game["notes_en"] = r.description_en
     if r.thumbnail_url:
         game["image"] = _thumb_url(r.thumbnail_url)
+    if r.tags:
+        game["tags"] = [str(t) for t in r.tags if t]
     if r.format == "flash":
         game["flash"] = True
     return game
 
 
 def export_catalog(
-    games_path: str,
-    out_dir: str,
+    games_path: str = "",
+    out_dir: str = "",
     home_size: int = 48,
     exclude_legacy_jclic: bool = True,
 ) -> dict:
     init_index_schema()
 
-    run_sync(LegacyProvider(games_path))
+    if games_path:
+        run_sync(LegacyProvider(games_path))
 
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM resources WHERE active = 1").fetchall()
