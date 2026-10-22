@@ -176,3 +176,25 @@ a partir de l’índex actual, incloses les etiquetes. Requerix l’autenticaci�
 503 i sense autenticació vàlida retorna 401, sense escriure fitxers.
 
 Proves: `pytest -q tests/test_local_eduhoot_catalog.py tests/test_catalog_export.py`.
+
+## Trasllat de llibres públics entre instal·lacions locals
+
+`scripts/migrate-public-books.py` trasllada únicament publicacions actives, les
+seues fitxes i els fitxers del lector. No copia propostes privades, credencials
+o preferències, ni substituïx altres recursos. Cal actualitzar primer la API de
+destí i fer una còpia consistent de la SQLite amb permisos restringits.
+
+```sh
+python3 scripts/migrate-public-books.py --source /origen/recursos.db \
+  --target /desti/recursos.db --public-base http://banc.local:8086
+# Afegir --apply únicament després de revisar la simulació i la còpia de seguretat.
+```
+
+La simulació és el comportament per defecte. Els identificadors i revisions es
+conserven; només s'adapta l'origen dels enllaços del lector. Repetir el trasllat
+no duplica els llibres idèntics. Una revisió o fitxa diferent en destí atura tota
+l'operació, sense sobreescriure-la. Les insercions es fan en una transacció i no
+s'extrauen fitxers al sistema de fitxers. Es recomana fer-ho amb les publicacions
+aturades; una publicació nova en origen requerirà una altra revisió de la còpia.
+
+Proves: `pytest -q tests/test_public_book_migration.py`.
