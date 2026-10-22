@@ -1,0 +1,21 @@
+name: edutictac-recursos-production
+services:
+  recursos-api:
+    image: ${RECURSOS_IMAGE:-edutictac/recursos-api:llibres-production-candidate}
+    network_mode: host
+    command: [uvicorn, main:app, --host, 127.0.0.1, --port, '8004']
+    env_file: [service.env]
+    volumes:
+      - /var/lib/recursos-api:/data
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

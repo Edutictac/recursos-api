@@ -136,6 +136,9 @@ def init_db() -> None:
 
 
 def _seed(conn: sqlite3.Connection) -> None:
+    # Existing public installations must not restore demonstration entries during updates.
+    if os.environ.get("RECURSOS_SEED", "1") == "0":
+        return
     seed_path = Path(__file__).with_name("seed.json")
     if not seed_path.exists():
         return

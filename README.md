@@ -210,3 +210,7 @@ El compilador de publicaciones de Llibres admite `es`, `ca`, `va`,
 atributo `lang` del lector HTML, normalizando únicamente `va` a `ca-valencia`.
 El lector inglés traduce sus controles de créditos y descarga. Los valores no
 admitidos siguen rechazándose antes de publicar. No requiere migración de datos.
+
+Producción: perfil Docker, preservación de datos, desactivación de datos de
+prueba (`RECURSOS_SEED=0`), conexión con Commons y reversión en
+[PRODUCTION_LLIBRES.md](docs/PRODUCTION_LLIBRES.md).
