@@ -198,3 +198,9 @@ s'extrauen fitxers al sistema de fitxers. Es recomana fer-ho amb les publicacion
 aturades; una publicació nova en origen requerirà una altra revisió de la còpia.
 
 Proves: `pytest -q tests/test_public_book_migration.py`.
+
+La ingesta autenticada de Play admite sus 13 tipos actuales, incluido Modo Reto.
+Esto solo amplía el catálogo de tipos: se mantienen la autenticación de servidor,
+la validación de origen, la visibilidad pública y la publicación idempotente.
+La aprobación docente de actividades del alumnado se autoriza en Commons/Play;
+el banco recibe únicamente publicaciones ya autorizadas por ese servicio.

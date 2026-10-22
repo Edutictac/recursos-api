@@ -127,3 +127,23 @@ def test_http_requires_explicit_classroom_origin(tmp_path, monkeypatch):
     with pytest.raises(main.HTTPException) as error:
         main._play_url("http://edutictac.local:8084/play/test", "canonical_url")
     assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize('kind', ['multiple-choice','true-false','memory','matching','classify','ordering',
+    'fill-blanks','find-words','drag-text','mark-words','dialog-cards','crossword','compound'])
+def test_every_supported_play_type_can_be_indexed_idempotently(tmp_path, monkeypatch, kind):
+    main=load_main(tmp_path,monkeypatch)
+    data=payload();data['metadata']['type']=kind
+    model=main.PlayResourcePublishIn(**data)
+    first=main.publish_play_activity('Ab12Cd34',model,request())
+    duplicate=main.publish_play_activity('Ab12Cd34',model,request())
+    assert first['resource_id']==duplicate['resource_id']
+    assert duplicate['status']=='published'
+
+
+def test_unknown_play_type_is_not_accepted(tmp_path, monkeypatch):
+    main=load_main(tmp_path,monkeypatch)
+    data=payload();data['metadata']['type']='executable'
+    with pytest.raises(main.HTTPException) as error:
+        main.publish_play_activity('Ab12Cd34',main.PlayResourcePublishIn(**data),request())
+    assert error.value.status_code==400

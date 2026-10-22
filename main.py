@@ -788,7 +788,8 @@ async def export_catalog_endpoint(request: Request) -> dict:
 # --- Ingesta server-to-server de EduTicTac Play ---
 
 PLAY_PROVIDER = "edutictac-play"
-PLAY_TYPES = {"multiple-choice", "true-false", "memory", "matching"}
+PLAY_TYPES = {"multiple-choice", "true-false", "memory", "matching", "classify", "ordering",
+              "fill-blanks", "find-words", "drag-text", "mark-words", "dialog-cards", "crossword", "compound"}
 
 
 def _require_play_ingest(request: Request) -> None:
