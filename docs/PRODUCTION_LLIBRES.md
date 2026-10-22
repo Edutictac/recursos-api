@@ -11,6 +11,8 @@ un candidato interno; la publicación desde su interfaz permanece desactivada.
 - Docker host network con uvicorn exclusivamente en `127.0.0.1:8004`.
 - Misma base `/var/lib/recursos-api/recursos.db`, montada en `/data`; se conservan
   favoritos, valoraciones, propuestas, catálogo y sesiones firmadas anteriores.
+  Directorio de datos 0700 y base 0600, propiedad del usuario de servicio 1000;
+  la sincronización existente utiliza una cuenta que conserva acceso.
 - Usuario 1000, raíz de solo lectura, tmpfs de 64 MiB, 512 MiB de memoria, una CPU,
   sin capacidades ni socket Docker. El perfil debe tratar el tmpfs como una sola
   cadena: las comas dentro de listas YAML requieren comillas.
