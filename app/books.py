@@ -201,7 +201,7 @@ def _compile_book(raw):
     meta = {k: text(manifest, k, n, required) for k, n, required in (
         ("title", 200, True), ("description", 2000, False), ("author", 120, True),
         ("license", 100, True), ("language", 12, True))}
-    if meta["language"] not in ("es", "va", "ca-valencia") or meta["license"] not in ("CC-BY-SA-4.0", "CC-BY-4.0", "CC0-1.0"):
+    if meta["language"] not in ("es", "ca", "va", "ca-valencia", "en") or meta["license"] not in ("CC-BY-SA-4.0", "CC-BY-4.0", "CC0-1.0"):
         fail()
     pages = manifest.get("pages")
     if not isinstance(pages, list) or not 1 <= len(pages) <= 51:
@@ -217,12 +217,19 @@ def _compile_book(raw):
         prev = f'<a href="#page-{i}">←</a>' if i else '<span>←</span>'
         next_ = f'<a href="#page-{i + 2}">→</a>' if i + 1 < len(pages) else '<span>→</span>'
         sections.append(f'<section class="page" id="page-{i + 1}" aria-label="{html.escape(page, quote=True)}">{svg}<nav>{prev}<span>{i + 1} / {len(pages)}</span>{next_}</nav></section>')
+    labels = {
+        "source": "Source and licence" if meta["language"] == "en" else "Font i llicència / Fuente y licencia",
+        "editable": "Download editable file" if meta["language"] == "en" else "Descarrega editable / Descargar editable",
+        "credits": "Credits and licences" if meta["language"] == "en" else "Crèdits i llicències / Créditos y licencias",
+        "about": "About this reader and licences" if meta["language"] == "en" else "Sobre este lector y licencias / Sobre este lector i llicències",
+        "server": "Server source code" if meta["language"] == "en" else "Codi font del servidor / Código fuente del servidor",
+    }
     credits = []
     for name, data in package.items():
         if re.fullmatch(r"credits/[a-f0-9]{64}\.txt", name):
             c = credit_file(data)
             files[name] = (data, "text/plain; charset=utf-8")
-            credits.append(f'<li>{html.escape(c["name"])} · {html.escape(c["attribution"])} · {html.escape(c["license"])} — <a href="{name}" download>Font i llicència / Fuente y licencia</a></li>')
+            credits.append(f'<li>{html.escape(c["name"])} · {html.escape(c["attribution"])} · {html.escape(c["license"])} — <a href="{name}" download>{labels["source"]}</a></li>')
             expected.add(name)
     source = package.get("source.elpx")
     if source is not None:
@@ -241,10 +248,10 @@ def _compile_book(raw):
     if set(package) != expected:
         fail()
     files["cover.png"] = (raster(package["cover.png"], cover=True), "image/png")
-    editable = '<a href="source.elpx" download>Descarrega editable / Descargar editable</a>' if source else ""
+    editable = f'<a href="source.elpx" download>{labels["editable"]}</a>' if source else ""
     css = 'body{margin:0;background:#edf0e9;color:#193f38;font:18px Arial}header,footer{padding:1rem;max-width:1280px;margin:auto}h1{font-size:1.4rem}main{max-width:1280px;margin:auto}.page{display:none}.page:first-child{display:block}main:has(.page:target) .page{display:none}.page:target{display:block!important}svg{display:block;width:100%;height:auto;background:#fffdf5}nav{display:flex;justify-content:space-between;align-items:center;padding:1rem}nav a{padding:.7rem 1.5rem;background:white;border-radius:.5rem}a{color:#193f38}footer{font-size:.85rem}li{margin:.6rem 0}'
-    language = "ca-valencia" if meta["language"] != "es" else "es"
-    document = f'<!doctype html><html lang="{language}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(meta["title"])}</title><style>{css}</style><header><h1>{html.escape(meta["title"])}</h1><p>{html.escape(meta["author"])}</p></header><main>{"".join(sections)}</main><footer><p>{html.escape(meta["license"])} · {editable}</p><details><summary>Crèdits i llicències / Créditos y licencias</summary><ul>{"".join(credits)}</ul></details><details><summary>Sobre este lector y licencias / Sobre este lector i llicències</summary><p><a href="../../source.zip" download>Codi font del servidor / Código fuente del servidor</a></p></details></footer></html>'
+    language = "ca-valencia" if meta["language"] == "va" else meta["language"]
+    document = f'<!doctype html><html lang="{language}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(meta["title"])}</title><style>{css}</style><header><h1>{html.escape(meta["title"])}</h1><p>{html.escape(meta["author"])}</p></header><main>{"".join(sections)}</main><footer><p>{html.escape(meta["license"])} · {editable}</p><details><summary>{labels["credits"]}</summary><ul>{"".join(credits)}</ul></details><details><summary>{labels["about"]}</summary><p><a href="../../source.zip" download>{labels["server"]}</a></p></details></footer></html>'
     files["index.html"] = (document.encode(), "text/html; charset=utf-8")
     if sum(len(body) for body, _ in files.values()) > 60 * 1024 * 1024:
         fail("publication_limit", 413)

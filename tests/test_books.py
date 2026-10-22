@@ -18,10 +18,10 @@ def png():
     out=io.BytesIO();Image.new('RGBA',(16,16),(50,150,80,255)).save(out,'PNG');return out.getvalue()
 
 
-def package(title="Un conte", editable=False, svg=None, extra=None):
+def package(title="Un conte", editable=False, svg=None, extra=None, language="va"):
     image=base64.b64encode(png()).decode()
     scene=svg or '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#fff"/><text x="20" y="50">Una història</text><image xlink:href="data:image/png;base64,'+image+'" x="40" y="60" width="100" height="100"/></svg>'
-    files={'manifest.json':json.dumps(dict(format='llibres-publication',version=1,visibility='public',confirmed=True,title=title,author='Aula de prova',description='Una història compartida.',license='CC-BY-SA-4.0',language='va',pages=['Portada','Final'])).encode(),
+    files={'manifest.json':json.dumps(dict(format='llibres-publication',version=1,visibility='public',confirmed=True,title=title,author='Aula de prova',description='Una història compartida.',license='CC-BY-SA-4.0',language=language,pages=['Portada','Final'])).encode(),
            'pages/1.svg':scene.encode(),'pages/2.svg':scene.encode(),'cover.png':png()}
     if editable:
         source=io.BytesIO()
@@ -167,3 +167,30 @@ def test_previously_published_reader_also_hides_source_under_licenses(books):
         db.execute("UPDATE llibres_files SET body=? WHERE book=? AND path='index.html'", (previous.encode(), result['id']))
     assert client.get(route).text == current
     assert client.get('/api/internal/llibres/'+DRAFT).json()['revision'] == result['revision']
+
+
+@pytest.mark.parametrize(("language", "html_language"), [
+    ("es", "es"), ("va", "ca-valencia"), ("ca-valencia", "ca-valencia"),
+    ("ca", "ca"), ("en", "en"),
+])
+def test_publication_preserves_supported_language(books, language, html_language):
+    module, client = books
+    published = client.post('/api/internal/llibres/' + DRAFT,
+        content=package(language=language, editable=True), headers={'If-Match':'"0"'})
+    assert published.status_code == 200, published.text
+    reader = client.get('/api/llibres/public/' + published.json()['id'] + '/index.html')
+    assert '<html lang="' + html_language + '">' in reader.text
+    indexed = client.get('/api/resources?provider=edutictac-llibres').json()['items'][0]
+    assert indexed['language'] == [language]
+    if language == 'en':
+        assert 'Credits and licences' in reader.text
+        assert 'Download editable file' in reader.text
+
+
+@pytest.mark.parametrize("language", ["fr", "<script>", "EN", ""])
+def test_unsupported_language_still_rejected(books, language):
+    _, client = books
+    response = client.post('/api/internal/llibres/' + DRAFT,
+        content=package(language=language), headers={'If-Match':'"0"'})
+    assert response.status_code == 422
+    assert client.get('/api/llibres/books').json()['items'] == []

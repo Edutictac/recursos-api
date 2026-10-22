@@ -204,3 +204,9 @@ Esto solo amplía el catálogo de tipos: se mantienen la autenticación de servi
 la validación de origen, la visibilidad pública y la publicación idempotente.
 La aprobación docente de actividades del alumnado se autoriza en Commons/Play;
 el banco recibe únicamente publicaciones ya autorizadas por ese servicio.
+
+El compilador de publicaciones de Llibres admite `es`, `ca`, `va`,
+`ca-valencia` (compatibilidad) y `en`. Conserva el idioma en el catálogo y el
+atributo `lang` del lector HTML, normalizando únicamente `va` a `ca-valencia`.
+El lector inglés traduce sus controles de créditos y descarga. Los valores no
+admitidos siguen rechazándose antes de publicar. No requiere migración de datos.
