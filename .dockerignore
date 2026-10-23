@@ -7,3 +7,11 @@ __pycache__
 *.pyc
 tests
 data
+
+**/.recall
+
+**/.git
+
+**/.env
+
+**/.env.*
