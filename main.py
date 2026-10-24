@@ -61,6 +61,13 @@ COOKIE_SECURE = os.environ.get("RECURSOS_COOKIE_SECURE", "1").lower() not in {"0
 EDUTICTAC_ID_API_URL = os.environ.get("EDUTICTAC_ID_API_URL", "").rstrip("/")
 EDUTICTAC_ID_TEACHER_TOKEN = os.environ.get("EDUTICTAC_ID_TEACHER_TOKEN", "")
 ALLOWED_AUTH_NEXT_HOSTS = {"edutictac.es", "recursos.edutictac.es"}
+# Sessió central d'EduTicTac (Commons). Amb "1", el Banc reconeix la sessió de Commons,
+# entra i ix per Commons i deixa d'acceptar les sessions pròpies de docent o alumne.
+# Amb "0" torna el login propi del Banc (vegeu README, vuelta atrás).
+CENTRAL_SESSION = os.environ.get("RECURSOS_CENTRAL_SESSION", "0").lower() in {"1", "true", "yes"}
+COMMONS_PUBLIC_URL = os.environ.get("RECURSOS_COMMONS_URL", "https://commons.edutictac.es").rstrip("/")
+CENTRAL_COOKIES = ("edutictac_oidc", "edutictac_id")
+CENTRAL_CACHE_SECONDS = 30
 RESOURCES_IMPORT_TOKEN = os.environ.get("RESOURCES_IMPORT_TOKEN", "")
 EXPORT_CATALOG_DIR = os.environ.get("RECURSOS_EXPORT_DIR", "").strip()
 
@@ -264,14 +271,141 @@ def session_admin(uid: str, cookie_admin: bool) -> bool:
     return cookie_admin
 
 
+# --- Sessió central (Commons) ---
+#
+# El Banc no valida les galetes centrals: les reenvia a l'id-api per la xarxa interna,
+# amb el testimoni d'aplicació, i rep la identitat estable. El `sub` d'Authentik és el
+# mateix en tots els proveïdors (`hashed_user_id`), així que `oidc:<sub>` coincidix
+# amb les dades que el Banc ja tenia de cada docent.
+
+_central_cache: dict[str, tuple[float, tuple[str, bool, str] | None]] = {}
+
+
+def central_identity(request: Request) -> tuple[str, bool, str] | None:
+    """(uid, admin, nom visible) de la sessió central, o None."""
+    if not CENTRAL_SESSION or not EDUTICTAC_ID_API_URL or not config.EDUTICTAC_ID_APP_TOKEN:
+        return None
+    cookies = {name: request.cookies[name] for name in CENTRAL_COOKIES if request.cookies.get(name)}
+    if not cookies:
+        return None
+    key = hashlib.sha256(json.dumps(cookies, sort_keys=True).encode()).hexdigest()
+    now = time.monotonic()
+    cached = _central_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        response = httpx.get(
+            f"{EDUTICTAC_ID_API_URL}/api/internal/session/resolve",
+            headers={
+                "Authorization": f"Bearer {config.EDUTICTAC_ID_APP_TOKEN}",
+                "Cookie": "; ".join(f"{name}={value}" for name, value in cookies.items()),
+            },
+            timeout=3,
+        )
+        data = response.json() if response.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError) as exc:
+        # Sense id-api, ningú queda identificat per la sessió central (mai a l'inrevés).
+        logger.warning("central session unavailable: %s", exc.__class__.__name__)
+        return None
+    result = None
+    if data.get("kind") == "oidc" and data.get("sub"):
+        sub = str(data["sub"])
+        admin = data.get("role") == "administrador" or oidc.is_admin_sub(sub)
+        result = (f"oidc:{sub}", admin, str(data.get("display_name") or ""))
+    elif data.get("kind") == "student" and data.get("id") and data.get("public_code"):
+        public_code = re.sub(r"[^A-Z0-9]+", "", str(data["public_code"]).upper())[:12]
+        result = (f"student:{public_code}:{data['id']}", False, "")
+    if len(_central_cache) > 1000:
+        _central_cache.clear()
+    _central_cache[key] = (now + CENTRAL_CACHE_SECONDS, result)
+    return result
+
+
+def local_session(request: Request) -> tuple[str, bool]:
+    """Sessió pròpia del Banc. Amb la sessió central només val la identitat anònima."""
+    sess = parse_session(request.cookies.get(SESSION_COOKIE))
+    if not sess or not sess.get("uid"):
+        return "", False
+    uid = sess["uid"]
+    if CENTRAL_SESSION and (uid.startswith("oidc:") or uid.startswith("student:")):
+        return "", False
+    return uid, session_admin(uid, bool(sess.get("admin")))
+
+
+def merge_anonymous(anonymous_uid: str, uid: str) -> None:
+    """Passa favorits, valoracions i avisos anònims al compte, sense duplicar res.
+
+    Si el compte ja tenia una valoració o un avís del mateix recurs, el seu queda i
+    l'anònim es descompta del resum perquè les mitjanes continuen sent correctes.
+    """
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO favorites (user_id, game_key, created_at) "
+            "SELECT ?, game_key, created_at FROM favorites WHERE user_id = ?",
+            (uid, anonymous_uid),
+        )
+        conn.execute("DELETE FROM favorites WHERE user_id = ?", (anonymous_uid,))
+        duplicated = conn.execute(
+            "SELECT a.game_key, a.value FROM ratings a JOIN ratings b "
+            "ON b.game_key = a.game_key AND b.user_id = ? WHERE a.user_id = ?",
+            (uid, anonymous_uid),
+        ).fetchall()
+        for game_key, value in duplicated:
+            conn.execute(
+                "UPDATE rating_summary SET sum = MAX(sum - ?, 0), count = MAX(count - 1, 0), "
+                "avg = CASE WHEN count - 1 > 0 THEN (sum - ?) * 1.0 / (count - 1) ELSE 0 END "
+                "WHERE game_key = ?",
+                (value, value, game_key),
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO ratings (user_id, game_key, value, updated_at) "
+            "SELECT ?, game_key, value, updated_at FROM ratings WHERE user_id = ?",
+            (uid, anonymous_uid),
+        )
+        conn.execute("DELETE FROM ratings WHERE user_id = ?", (anonymous_uid,))
+        reported = conn.execute(
+            "SELECT a.game_key FROM reports a JOIN reports b "
+            "ON b.game_key = a.game_key AND b.user_id = ? WHERE a.user_id = ?",
+            (uid, anonymous_uid),
+        ).fetchall()
+        for (game_key,) in reported:
+            conn.execute(
+                "UPDATE broken_reports SET count = MAX(count - 1, 0) WHERE game_key = ?", (game_key,)
+            )
+        conn.execute(
+            "INSERT OR IGNORE INTO reports (user_id, game_key, reported_at) "
+            "SELECT ?, game_key, reported_at FROM reports WHERE user_id = ?",
+            (uid, anonymous_uid),
+        )
+        conn.execute("DELETE FROM reports WHERE user_id = ?", (anonymous_uid,))
+
+
+def adopt_central(request: Request, response: Response | None) -> tuple[str, bool] | None:
+    """Identitat central; si el navegador portava un uid anònim, el fusiona i l'oblida."""
+    central = central_identity(request)
+    if not central:
+        if response is not None and CENTRAL_SESSION and request.cookies.get(SESSION_COOKIE) and not local_session(request)[0]:
+            # Una sessió pròpia antiga de docent o alumne ja no val: s'esborra.
+            delete_session_cookie(response)
+        return None
+    uid, admin, _name = central
+    local_uid, _local_admin = local_session(request)
+    if local_uid and not local_uid.startswith(("oidc:", "student:")):
+        merge_anonymous(local_uid, uid)
+        if response is not None:
+            delete_session_cookie(response)
+    elif response is not None and request.cookies.get(SESSION_COOKIE) and not local_uid:
+        # Una sessió pròpia antiga de docent o alumne ja no val: s'esborra.
+        delete_session_cookie(response)
+    return uid, admin
+
+
 def get_session(request: Request) -> tuple[str, bool]:
-    """Devuelve (uid, admin). Crea identidad anónima si no hay cookie válida."""
-    cookie = request.cookies.get(SESSION_COOKIE)
-    sess = parse_session(cookie)
-    if sess and sess.get("uid"):
-        uid = sess["uid"]
-        return uid, session_admin(uid, bool(sess.get("admin")))
-    return "", False
+    """Devuelve (uid, admin): primer la sessió central, després la pròpia del Banc."""
+    central = central_identity(request)
+    if central:
+        return central[0], central[1]
+    return local_session(request)
 
 
 def rate_limited(ip: str) -> bool:
@@ -399,11 +533,12 @@ def add_submission(payload: SubmissionIn, request: Request, response: Response) 
 
 def _ensure_uid(request: Request, response: Response) -> tuple[str, bool]:
     """Garantiza identidad anónima: devuelve (uid, admin) y fija la cookie si faltaba."""
-    cookie = request.cookies.get(SESSION_COOKIE)
-    sess = parse_session(cookie)
-    if sess and sess.get("uid"):
-        uid = sess["uid"]
-        return uid, session_admin(uid, bool(sess.get("admin")))
+    central = adopt_central(request, response)
+    if central:
+        return central
+    local_uid, local_admin = local_session(request)
+    if local_uid:
+        return local_uid, local_admin
     uid = secrets.token_hex(16)
     set_session_cookie(response, make_session(uid, admin=False), 60 * 60 * 24 * 365)
     return uid, False
@@ -411,7 +546,8 @@ def _ensure_uid(request: Request, response: Response) -> tuple[str, bool]:
 
 def resolve_community_identity(request: Request, response: Response) -> Identity:
     if request.method == "GET" and request.url.path.endswith("/preferences"):
-        uid, admin = get_session(request)
+        central = adopt_central(request, response)
+        uid, admin = central if central else local_session(request)
         return Identity(uid=uid, admin=admin)
     uid, admin = _ensure_uid(request, response)
     return Identity(uid=uid, admin=admin)
@@ -1046,6 +1182,14 @@ def admin_sources(request: Request) -> dict:
 
 @app.get("/api/auth/login")
 def auth_login(next_url: str = Query("", alias="next")) -> RedirectResponse:
+    if CENTRAL_SESSION:
+        # S'entra en Commons i es torna al Banc (o a la pàgina d'edutictac.es que ho demana).
+        return_to = auth_next_url(next_url)
+        if return_to == "/":
+            return_to = f"{config.APP_BASE_URL}/"
+        return RedirectResponse(
+            f"{COMMONS_PUBLIC_URL}/api/auth/oidc/login?next={urllib.parse.quote(return_to, safe='')}"
+        )
     if not oidc.enabled():
         raise HTTPException(status_code=503, detail="oidc not configured")
     url, state_cookie = oidc.build_login_url()
@@ -1095,8 +1239,9 @@ def auth_logout() -> RedirectResponse:
 
 
 @app.get("/api/auth/me")
-def auth_me(request: Request) -> dict:
-    uid, admin = get_session(request)
+def auth_me(request: Request, response: Response) -> dict:
+    central = adopt_central(request, response)
+    uid, admin = central if central else local_session(request)
     logged_in = bool(uid.startswith("oidc:"))
     sub = uid[len("oidc:"):] if logged_in else ""
     return {
@@ -1104,12 +1249,17 @@ def auth_me(request: Request) -> dict:
         "admin": admin,
         "sub": sub,
         "admin_sub": sub,
+        "central": CENTRAL_SESSION,
+        "commons_url": COMMONS_PUBLIC_URL if CENTRAL_SESSION else "",
         **_student_payload(uid),
     }
 
 
 @app.post("/api/student/login")
 def student_login(payload: StudentLoginIn, request: Request, response: Response) -> dict:
+    if CENTRAL_SESSION:
+        # Amb la sessió central, l'alumnat entra amb codi i PIN en Commons.
+        raise HTTPException(status_code=409, detail="use central login")
     if rate_limited(_client_ip(request)):
         raise HTTPException(status_code=429, detail="too many requests")
     if not EDUTICTAC_ID_API_URL:

@@ -93,6 +93,25 @@ PLAY_ALLOWED_HOSTS=edutictac.es,play.edutictac.es
 Els secrets d'OIDC i sessió es guarden fora del repositori, en el fitxer
 d'entorn del servei.
 
+### Sessió central d'EduTicTac
+
+Amb `RECURSOS_CENTRAL_SESSION=1` el Banc reconeix la sessió de Commons:
+
+- Reenvia les galetes centrals (`edutictac_oidc`, `edutictac_id`) a l'id-api per la
+  xarxa interna (`EDUTICTAC_ID_API_URL` + `EDUTICTAC_ID_APP_TOKEN`,
+  `GET /api/internal/session/resolve`) i rep la identitat estable. Mai valida les
+  galetes pel seu compte; si l'id-api no respon, ningú queda identificat.
+- Els docents continuen sent `oidc:<sub>` (Authentik usa `hashed_user_id`, el mateix
+  `sub` en tots els proveïdors) i l'alumnat `student:<codi>:<id>`: no cal migrar dades.
+- Admin: rol `administrador` de Commons o `sub` en `OIDC_ADMIN_SUBS` (Commons no
+  rep el correu, així que `OIDC_ADMIN_EMAILS` deixa de servir en este mode).
+- En entrar, els favorits, valoracions i avisos anònims del navegador passen al
+  compte (sense duplicar-los i corregint els resums) i la galeta anònima s'esborra.
+- `/api/auth/login` porta al login de Commons (`RECURSOS_COMMONS_URL`, per defecte
+  `https://commons.edutictac.es`) i les sessions pròpies antigues de docent o alumne
+  deixen de valdre. `/api/student/login` respon 409: l'alumnat entra en Commons.
+- Tornar arrere: `RECURSOS_CENTRAL_SESSION=0` recupera el login propi del Banc.
+
 En un aula Commons que publica Play per HTTP, configura també `PLAY_PUBLIC_URL`
 amb l'adreça real (per exemple `http://edutictac.local:8084`) i inclou el seu
 host en `PLAY_ALLOWED_HOSTS`. Només s'admet HTTP per eixe origen exacte
