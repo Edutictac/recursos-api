@@ -1248,7 +1248,8 @@ def auth_me(request: Request, response: Response) -> dict:
     uid, admin = central if central else local_session(request)
     logged_in = bool(uid.startswith("oidc:"))
     if CENTRAL_SESSION and central:
-        logged_in = logged_in and (central[1] or central[3] in {"profesor", "administrador"})
+        identity = central_identity(request)
+        logged_in = logged_in and bool(identity and (identity[1] or identity[3] in {"profesor", "administrador"}))
     sub = uid[len("oidc:"):] if logged_in else ""
     return {
         "logged_in": logged_in,
