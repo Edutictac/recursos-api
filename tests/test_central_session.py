@@ -49,6 +49,7 @@ def banc(tmp_path, monkeypatch):
         'admin-cookie': {'kind': 'oidc', 'sub': 'other', 'role': 'administrador', 'display_name': 'Dir'},
         'subadmin-cookie': {'kind': 'oidc', 'sub': 'hash-sub-admin', 'role': 'profesor', 'display_name': 'A'},
         'pupil-cookie': {'kind': 'student', 'id': 'ident-1', 'public_code': 'k7m'},
+        'nonteacher-cookie': {'kind': 'oidc', 'sub': 'basic-account', 'role': 'alumno'},
     }
 
     def fake_get(url, headers=None, timeout=None):
@@ -91,6 +92,16 @@ def test_pupil_central_session(banc):
     me = client(main, edutictac_id='pupil-cookie').get('/api/auth/me').json()
     assert me['student_logged_in'] and me['student_code'] == 'K7M' and not me['logged_in']
     assert client(main).post('/api/student/login', json={'public_code': 'K7M', 'pin': '1234'}).status_code == 409
+
+
+def test_an_oidc_account_without_a_teacher_role_cannot_use_teacher_routes(banc):
+    main, _ = banc
+    c = client(main, edutictac_oidc='nonteacher-cookie')
+    me = c.get('/api/auth/me').json()
+    assert not me['logged_in'] and not me['admin']
+    assert c.get('/api/teacher/favorites').status_code == 403
+    # Personal preferences keep the stable identity, without granting staff access.
+    assert c.get('/api/preferences').status_code == 200
 
 
 def test_old_local_teacher_session_no_longer_counts(banc):

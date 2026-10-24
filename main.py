@@ -278,11 +278,11 @@ def session_admin(uid: str, cookie_admin: bool) -> bool:
 # mateix en tots els proveïdors (`hashed_user_id`), així que `oidc:<sub>` coincidix
 # amb les dades que el Banc ja tenia de cada docent.
 
-_central_cache: dict[str, tuple[float, tuple[str, bool, str] | None]] = {}
+_central_cache: dict[str, tuple[float, tuple[str, bool, str, str] | None]] = {}
 
 
-def central_identity(request: Request) -> tuple[str, bool, str] | None:
-    """(uid, admin, nom visible) de la sessió central, o None."""
+def central_identity(request: Request) -> tuple[str, bool, str, str] | None:
+    """(uid, admin, nom visible, rol) de la sessió central, o None."""
     if not CENTRAL_SESSION or not EDUTICTAC_ID_API_URL or not config.EDUTICTAC_ID_APP_TOKEN:
         return None
     cookies = {name: request.cookies[name] for name in CENTRAL_COOKIES if request.cookies.get(name)}
@@ -311,10 +311,10 @@ def central_identity(request: Request) -> tuple[str, bool, str] | None:
     if data.get("kind") == "oidc" and data.get("sub"):
         sub = str(data["sub"])
         admin = data.get("role") == "administrador" or oidc.is_admin_sub(sub)
-        result = (f"oidc:{sub}", admin, str(data.get("display_name") or ""))
+        result = (f"oidc:{sub}", admin, str(data.get("display_name") or ""), str(data.get("role") or ""))
     elif data.get("kind") == "student" and data.get("id") and data.get("public_code"):
         public_code = re.sub(r"[^A-Z0-9]+", "", str(data["public_code"]).upper())[:12]
-        result = (f"student:{public_code}:{data['id']}", False, "")
+        result = (f"student:{public_code}:{data['id']}", False, "", "alumno")
     if len(_central_cache) > 1000:
         _central_cache.clear()
     _central_cache[key] = (now + CENTRAL_CACHE_SECONDS, result)
@@ -388,7 +388,7 @@ def adopt_central(request: Request, response: Response | None) -> tuple[str, boo
             # Una sessió pròpia antiga de docent o alumne ja no val: s'esborra.
             delete_session_cookie(response)
         return None
-    uid, admin, _name = central
+    uid, admin, _name, _role = central
     local_uid, _local_admin = local_session(request)
     if local_uid and not local_uid.startswith(("oidc:", "student:")):
         merge_anonymous(local_uid, uid)
@@ -581,6 +581,10 @@ def _require_teacher(request: Request) -> str:
     uid, _ = get_session(request)
     if not uid.startswith("oidc:"):
         raise HTTPException(status_code=401, detail="teacher authentication required")
+    if CENTRAL_SESSION:
+        identity = central_identity(request)
+        if not identity or not (identity[1] or identity[3] in {"profesor", "administrador"}):
+            raise HTTPException(status_code=403, detail="teacher role required")
     return uid
 
 
@@ -1243,6 +1247,8 @@ def auth_me(request: Request, response: Response) -> dict:
     central = adopt_central(request, response)
     uid, admin = central if central else local_session(request)
     logged_in = bool(uid.startswith("oidc:"))
+    if CENTRAL_SESSION and central:
+        logged_in = logged_in and (central[1] or central[3] in {"profesor", "administrador"})
     sub = uid[len("oidc:"):] if logged_in else ""
     return {
         "logged_in": logged_in,
